@@ -1406,6 +1406,28 @@ rebalance_ring(_CNode, Next, _CState) ->
     Next.
 
 %% @private
+-indef(rand_module).
+handle_down_nodes(CState, Next) ->
+    LeavingMembers = riak_core_ring:members(CState, [leaving, invalid]),
+    DownMembers = riak_core_ring:members(CState, [down]),
+    Next2 = [begin
+                 OwnerLeaving = lists:member(O, LeavingMembers),
+                 NextDown = lists:member(NO, DownMembers),
+                 case (OwnerLeaving and NextDown) of
+                     true ->
+                         Active = riak_core_ring:active_members(CState) -- [O],
+                         RNode = lists:nth(rand:uniform(length(Active)),
+                                           Active),
+                         {Idx, O, RNode, Mods, Status};
+                     _ ->
+                         T
+                 end
+             end || T={Idx, O, NO, Mods, Status} <- Next],
+    Next3 = [T || T={_, O, NO, _, _} <- Next2,
+                  not lists:member(O, DownMembers),
+                  not lists:member(NO, DownMembers)],
+    Next3.
+-else.
 handle_down_nodes(CState, Next) ->
     LeavingMembers = riak_core_ring:members(CState, [leaving, invalid]),
     DownMembers = riak_core_ring:members(CState, [down]),
@@ -1426,6 +1448,7 @@ handle_down_nodes(CState, Next) ->
                   not lists:member(O, DownMembers),
                   not lists:member(NO, DownMembers)],
     Next3.
+-endif.
 
 %% @private
 reassign_indices_to(Node, NewNode, Ring) ->

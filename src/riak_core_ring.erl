@@ -440,21 +440,46 @@ preflist(Key, State) -> chash:successors(Key, State?CHSTATE.chring).
 
 %% @doc Return a randomly-chosen node from amongst the owners.
 -spec random_node(State :: chstate()) -> Node :: term().
+-indef(rand_module).
+random_node(State) ->
+    L = all_members(State),
+    lists:nth(rand:uniform(length(L)), L).
+-else.
 random_node(State) ->
     L = all_members(State),
     lists:nth(random:uniform(length(L)), L).
+-endif.
 
 %% @doc Return a partition index not owned by the node executing this function.
 %%      If this node owns all partitions, return any index.
 -spec random_other_index(State :: chstate()) -> chash:index_as_int().
+-indef(rand_module).
+random_other_index(State) ->
+    L = [I || {I,Owner} <- ?MODULE:all_owners(State), Owner =/= node()],
+    case L of
+        [] -> hd(my_indices(State));
+        _ -> lists:nth(rand:uniform(length(L)), L)
+    end.
+-else.
 random_other_index(State) ->
     L = [I || {I,Owner} <- ?MODULE:all_owners(State), Owner =/= node()],
     case L of
         [] -> hd(my_indices(State));
         _ -> lists:nth(random:uniform(length(L)), L)
     end.
+-endif.
 
 -spec random_other_index(State :: chstate(), Exclude :: [term()]) -> chash:index_as_int() | no_indices.
+-indef(rand_module).
+random_other_index(State, Exclude) when is_list(Exclude) ->
+    L = [I || {I, Owner} <- ?MODULE:all_owners(State),
+              Owner =/= node(),
+              not lists:member(I, Exclude)],
+    case L of
+        [] -> no_indices;
+        _ -> lists:nth(rand:uniform(length(L)), L)
+    end.
+-else.
 random_other_index(State, Exclude) when is_list(Exclude) ->
     L = [I || {I, Owner} <- ?MODULE:all_owners(State),
               Owner =/= node(),
@@ -463,9 +488,19 @@ random_other_index(State, Exclude) when is_list(Exclude) ->
         [] -> no_indices;
         _ -> lists:nth(random:uniform(length(L)), L)
     end.
+-endif.
 
 %% @doc Return a randomly-chosen node from amongst the owners other than this one.
 -spec random_other_node(State :: chstate()) -> Node :: term() | no_node.
+-indef(rand_module).
+random_other_node(State) ->
+    case lists:delete(node(), all_members(State)) of
+        [] ->
+            no_node;
+        L ->
+            lists:nth(rand:uniform(length(L)), L)
+    end.
+-else.
 random_other_node(State) ->
     case lists:delete(node(), all_members(State)) of
         [] ->
@@ -473,9 +508,19 @@ random_other_node(State) ->
         L ->
             lists:nth(random:uniform(length(L)), L)
     end.
+-endif.
 
 %% @doc Return a randomly-chosen active node other than this one.
 -spec random_other_active_node(State :: chstate()) -> Node :: term() | no_node.
+-indef(rand_module).
+random_other_active_node(State) ->
+    case lists:delete(node(), active_members(State)) of
+        [] ->
+            no_node;
+        L ->
+            lists:nth(rand:uniform(length(L)), L)
+    end.
+-else.
 random_other_active_node(State) ->
     case lists:delete(node(), active_members(State)) of
         [] ->
@@ -483,6 +528,7 @@ random_other_active_node(State) ->
         L ->
             lists:nth(random:uniform(length(L)), L)
     end.
+-endif.
 
 %% @doc Incorporate another node's state into our view of the Riak world.
 -spec reconcile(ExternState :: chstate(), MyState :: chstate()) ->

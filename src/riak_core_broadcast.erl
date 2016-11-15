@@ -485,7 +485,7 @@ random_peer(Root, State=#state{all_members=All}) ->
     end.
 
 %% picks random node from ordset
--indef(rand_module).
+-ifdef(rand_module).
 random_other_node(OrdSet) ->
     Size = ordsets:size(OrdSet),
     case Size of
@@ -604,7 +604,7 @@ reset_peers(AllMembers, EagerPeers, LazyPeers, State) ->
 all_broadcast_members(Ring) ->
     riak_core_ring:all_members(Ring).
 
--indef(rand_module).
+-ifdef(rand_module).
 init_peers(Members) ->
     case length(Members) of
         1 ->

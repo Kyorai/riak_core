@@ -1406,7 +1406,7 @@ rebalance_ring(_CNode, Next, _CState) ->
     Next.
 
 %% @private
--indef(rand_module).
+-ifdef(rand_module).
 handle_down_nodes(CState, Next) ->
     LeavingMembers = riak_core_ring:members(CState, [leaving, invalid]),
     DownMembers = riak_core_ring:members(CState, [down]),

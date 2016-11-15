@@ -219,7 +219,7 @@ started(wait_for_init, _From, State =
             {stop, Reason}
     end.
 
--indef(rand_module).
+-ifdef(rand_module).
 do_init(State = #state{index=Index, mod=Mod, forward=Forward}) ->
     {ModState, Props} = case Mod:init([Index]) of
         {ok, MS} -> {MS, []};

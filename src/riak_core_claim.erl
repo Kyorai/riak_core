@@ -379,7 +379,7 @@ choose_claim_v3(Ring, ClaimNode) ->
                                                 ?DEF_TARGET_N)}],
     choose_claim_v3(Ring, ClaimNode, Params).
 
--indef(rand_module).
+-ifdef(rand_module).
 choose_claim_v3(Ring, _ClaimNode, Params) ->
     S = length(riak_core_ring:active_members(Ring)),
     Q = riak_core_ring:num_partitions(Ring),
@@ -1059,7 +1059,7 @@ random_el(L) ->
 urand(High) ->
     urand(1, High).
 
--indef(rand_module).
+-ifdef(rand_module).
 urand(Low, High) ->
     Low + rand:uniform(High - Low + 1) - 1.
 -else.

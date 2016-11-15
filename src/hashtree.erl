@@ -691,7 +691,7 @@ del_bucket(Level, Bucket, State) ->
     end.
 
 -spec new_segment_store(proplist(), hashtree()) -> hashtree().
--indef(rand_module).
+-ifdef(rand_module).
 new_segment_store(Opts, State) ->
     DataDir = case proplists:get_value(segment_path, Opts) of
                   undefined ->

@@ -113,7 +113,7 @@ recursive_gossip(Ring) ->
             random_recursive_gossip(Ring)
     end.
 
--indef(rand_module).
+-ifdef(rand_module).
 random_recursive_gossip(Ring) ->
     Active = riak_core_ring:active_members(Ring),
     RNode = lists:nth(rand:uniform(length(Active)), Active),
@@ -400,7 +400,7 @@ attempt_simple_transfer(Seed, Ring, Owners, ExitingNode) ->
                             [{O,-TargetN} || O <- riak_core_ring:claiming_members(Ring),
                                              O /= ExitingNode]).
 
--indef(rand_module).
+-ifdef(rand_module).
 attempt_simple_transfer(Seed, Ring, [{P, Exit}|Rest], TargetN, Exit, Idx, Last) ->
     %% handoff
     case [ N || {N, I} <- Last, Idx-I >= TargetN ] of

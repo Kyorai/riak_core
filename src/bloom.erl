@@ -192,7 +192,7 @@ bitarray_get(I, A) ->
 
 simple_shuffle(L, N) ->
     lists:sublist(simple_shuffle(L), 1, N).
--indef(rand_module).
+-ifdef(rand_module).
 simple_shuffle(L) ->
     N = 1000 * length(L),
     L2 = [{rand:uniform(N), E} || E <- L],

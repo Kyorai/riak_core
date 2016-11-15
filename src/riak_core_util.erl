@@ -135,7 +135,7 @@ rfc1123_to_now(String) when is_list(String) ->
 %% @spec make_tmp_dir() -> string()
 %% @doc Create a unique directory in /tmp.  Returns the path
 %%      to the new directory.
--indef(rand_module).
+-ifdef(rand_module).
 make_tmp_dir() ->
     TmpId = io_lib:format("riptemp.~p",
                           [erlang:phash2({rand:uniform(),self()})]),
@@ -245,7 +245,7 @@ md5(Bin) ->
     crypto:md5(Bin).
 -endif.
 
--indef(rand_module).
+-ifdef(rand_module).
 seed() ->
     %% We need to do this since passing in a seed that isn't
     %% properly formated causes horrors!
@@ -651,7 +651,7 @@ orddict_delta(A, B) ->
                           end, Merged),
     Diff.
 
--indef(rand_module).
+-ifdef(rand_module).
 shuffle(L) ->
     N = 134217727, %% Largest small integer on 32-bit Erlang
     L2 = [{rand:uniform(N), E} || E <- L],

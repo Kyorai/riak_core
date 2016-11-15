@@ -38,7 +38,7 @@ enable() ->
 start_set_net_ticktime_daemon(Node, Time) ->
     start_set_net_ticktime_daemon(Node, Time, net_ticktime_active()).
 
--indef(rand_module).
+-ifdef(rand_module).
 start_set_net_ticktime_daemon(Node, Time, true) ->
     EbinDir = filename:dirname(code:which(?MODULE)),
     try
@@ -142,7 +142,7 @@ async_start_set_net_ticktime_daemons(Time, Nodes) ->
                   [exit(Pid, kill) || Pid <- Pids]
           end).
 
--indef(rand_module).
+-ifdef(rand_module).
 set_net_ticktime_daemon_loop(Time, Count) ->
     case set_net_ticktime(Time) of
         unchanged ->

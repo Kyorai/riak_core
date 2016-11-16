@@ -38,6 +38,43 @@ enable() ->
 start_set_net_ticktime_daemon(Node, Time) ->
     start_set_net_ticktime_daemon(Node, Time, net_ticktime_active()).
 
+-ifdef(rand_module).
+start_set_net_ticktime_daemon(Node, Time, true) ->
+    EbinDir = filename:dirname(code:which(?MODULE)),
+    try
+        Dirs = rpc:call(Node, code, get_path, []),
+        case lists:member(EbinDir, Dirs) of
+            false ->
+                lager:info("start_set_net_ticktime_daemon: adding to code path "
+                           "for node ~p\n", [Node]),
+                rpc:call(Node, code, add_pathz, [EbinDir]);
+            true ->
+                ok
+        end
+    catch _:_ ->
+            %% Network problems or timeouts here, spawn will fail, no
+            %% worries, we'll try again soon.
+            ok
+    end,
+    spawn(Node, fun() ->
+                        try
+                            register(?REGNAME, self()),
+                            %% If we get here, we are the one daemon process
+                            lager:info("start_set_net_ticktime_daemon: started "
+                                       "changing net_ticktime on ~p to ~p\n",
+                                 [Node, Time]),
+                            _ = rand:seed(os:timestamp()),
+                            set_net_ticktime_daemon_loop(Time, 1)
+                        catch _:_ ->
+                                ok
+                        end
+                end);
+start_set_net_ticktime_daemon(Node, _Time, false) ->
+    lager:info("Not starting tick daemon on ~p. Capability unsupported. "
+               "Some nodes in the Riak cluster do not have ~p loaded\n",
+               [Node, ?MODULE]),
+    ok.
+-else.
 start_set_net_ticktime_daemon(Node, Time, true) ->
     EbinDir = filename:dirname(code:which(?MODULE)),
     try
@@ -73,6 +110,7 @@ start_set_net_ticktime_daemon(Node, _Time, false) ->
                "Some nodes in the Riak cluster do not have ~p loaded\n",
                [Node, ?MODULE]),
     ok.
+-endif.
 
 stop_set_net_ticktime_daemon(Node) ->
     Capability = riak_core_capability:get({riak_core, net_ticktime}),
@@ -109,6 +147,31 @@ async_start_set_net_ticktime_daemons(Time, Nodes) ->
                   [exit(Pid, kill) || Pid <- Pids]
           end).
 
+-ifdef(rand_module).
+set_net_ticktime_daemon_loop(Time, Count) ->
+    case set_net_ticktime(Time) of
+        unchanged ->
+            lager:info("start_set_net_ticktime_daemon: finished "
+                       "changing net_ticktime on ~p to ~p\n", [node(), Time]),
+            exit(normal);
+        _ ->
+            timer:sleep(rand:uniform(1*1000)),
+            %% Here is an uncommon use the erlang:nodes/1 BIF.
+            %% Hidden nodes (e.g. administrative escripts) may have
+            %% connected to us.  Force them to change their tick time,
+            %% in case they're using something different.  And pick up
+            %% any regular nodes that have connected since we started.
+            if
+                Count rem 5 == 0 ->
+                    async_start_set_net_ticktime_daemons(
+                      Time, da_nodes(nodes(connected))),
+                    ok;
+                true ->
+                    ok
+            end,
+            set_net_ticktime_daemon_loop(Time, Count + 1)
+    end.
+-else.
 set_net_ticktime_daemon_loop(Time, Count) ->
     case set_net_ticktime(Time) of
         unchanged ->
@@ -132,6 +195,7 @@ set_net_ticktime_daemon_loop(Time, Count) ->
             end,
             set_net_ticktime_daemon_loop(Time, Count + 1)
     end.
+-endif.
 
 da_nodes(Nodes) ->
     lists:sort([node()|Nodes]).                 % Always include myself

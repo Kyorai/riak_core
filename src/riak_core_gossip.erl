@@ -113,10 +113,17 @@ recursive_gossip(Ring) ->
             random_recursive_gossip(Ring)
     end.
 
+-ifdef(rand_module).
+random_recursive_gossip(Ring) ->
+    Active = riak_core_ring:active_members(Ring),
+    RNode = lists:nth(rand:uniform(length(Active)), Active),
+    recursive_gossip(Ring, RNode).
+-else.
 random_recursive_gossip(Ring) ->
     Active = riak_core_ring:active_members(Ring),
     RNode = lists:nth(random:uniform(length(Active)), Active),
     recursive_gossip(Ring, RNode).
+-endif.
 
 %% ===================================================================
 %% gen_server behaviour
@@ -392,6 +399,47 @@ attempt_simple_transfer(Seed, Ring, Owners, ExitingNode) ->
                             ExitingNode, 0,
                             [{O,-TargetN} || O <- riak_core_ring:claiming_members(Ring),
                                              O /= ExitingNode]).
+
+-ifdef(rand_module).
+attempt_simple_transfer(Seed, Ring, [{P, Exit}|Rest], TargetN, Exit, Idx, Last) ->
+    %% handoff
+    case [ N || {N, I} <- Last, Idx-I >= TargetN ] of
+        [] ->
+            target_n_fail;
+        Candidates ->
+            %% these nodes don't violate target_n in the reverse direction
+            StepsToNext = fun(Node) ->
+                                  length(lists:takewhile(
+                                           fun({_, Owner}) -> Node /= Owner end,
+                                           Rest))
+                          end,
+            case lists:filter(fun(N) ->
+                                 Next = StepsToNext(N),
+                                 (Next+1 >= TargetN)
+                                          orelse (Next == length(Rest))
+                              end,
+                              Candidates) of
+                [] ->
+                    target_n_fail;
+                Qualifiers ->
+                    %% these nodes don't violate target_n forward
+                    {Rand, Seed2} = rand:uniform_s(length(Qualifiers), Seed),
+                    Chosen = lists:nth(Rand, Qualifiers),
+                    %% choose one, and do the rest of the ring
+                    attempt_simple_transfer(
+                      Seed2,
+                      riak_core_ring:transfer_node(P, Chosen, Ring),
+                      Rest, TargetN, Exit, Idx+1,
+                      lists:keyreplace(Chosen, 1, Last, {Chosen, Idx}))
+            end
+    end;
+attempt_simple_transfer(Seed, Ring, [{_, N}|Rest], TargetN, Exit, Idx, Last) ->
+    %% just keep track of seeing this node
+    attempt_simple_transfer(Seed, Ring, Rest, TargetN, Exit, Idx+1,
+                            lists:keyreplace(N, 1, Last, {N, Idx}));
+attempt_simple_transfer(_, Ring, [], _, _, _, _) ->
+    {ok, Ring}.
+-else.
 attempt_simple_transfer(Seed, Ring, [{P, Exit}|Rest], TargetN, Exit, Idx, Last) ->
     %% handoff
     case [ N || {N, I} <- Last, Idx-I >= TargetN ] of
@@ -430,3 +478,4 @@ attempt_simple_transfer(Seed, Ring, [{_, N}|Rest], TargetN, Exit, Idx, Last) ->
                             lists:keyreplace(N, 1, Last, {N, Idx}));
 attempt_simple_transfer(_, Ring, [], _, _, _, _) ->
     {ok, Ring}.
+-endif.

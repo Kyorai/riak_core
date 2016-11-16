@@ -219,6 +219,39 @@ started(wait_for_init, _From, State =
             {stop, Reason}
     end.
 
+-ifdef(rand_module).
+do_init(State = #state{index=Index, mod=Mod, forward=Forward}) ->
+    {ModState, Props} = case Mod:init([Index]) of
+        {ok, MS} -> {MS, []};
+        {ok, MS, P} -> {MS, P};
+        {error, R} -> {error, R}
+    end,
+    case {ModState, Props} of
+        {error, Reason} ->
+            {error, Reason};
+        _ ->
+            case lists:keyfind(pool, 1, Props) of
+                {pool, WorkerModule, PoolSize, WorkerArgs}=PoolConfig ->
+                    lager:debug("starting worker pool ~p with size of ~p~n",
+                                [WorkerModule, PoolSize]),
+                    {ok, PoolPid} = riak_core_vnode_worker_pool:start_link(WorkerModule,
+                                                                       PoolSize,
+                                                                       Index,
+                                                                       WorkerArgs,
+                                                                       worker_props);
+                _ ->
+                    PoolPid = PoolConfig = undefined
+            end,
+            riak_core_handoff_manager:remove_exclusion(Mod, Index),
+            Timeout = app_helper:get_env(riak_core, vnode_inactivity_timeout, ?DEFAULT_TIMEOUT),
+            Timeout2 = Timeout + rand:uniform(Timeout),
+            State2 = State#state{modstate=ModState, inactivity_timeout=Timeout2,
+                                 pool_pid=PoolPid, pool_config=PoolConfig},
+            lager:debug("vnode :: ~p/~p :: ~p~n", [Mod, Index, Forward]),
+            State3 = mod_set_forwarding(Forward, State2),
+            {ok, State3}
+    end.
+-else.
 do_init(State = #state{index=Index, mod=Mod, forward=Forward}) ->
     {ModState, Props} = case Mod:init([Index]) of
         {ok, MS} -> {MS, []};
@@ -250,6 +283,7 @@ do_init(State = #state{index=Index, mod=Mod, forward=Forward}) ->
             State3 = mod_set_forwarding(Forward, State2),
             {ok, State3}
     end.
+-endif.
 
 wait_for_init(Vnode) ->
     gen_fsm:sync_send_event(Vnode, wait_for_init, infinity).

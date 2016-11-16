@@ -691,6 +691,41 @@ del_bucket(Level, Bucket, State) ->
     end.
 
 -spec new_segment_store(proplist(), hashtree()) -> hashtree().
+-ifdef(rand_module).
+new_segment_store(Opts, State) ->
+    DataDir = case proplists:get_value(segment_path, Opts) of
+                  undefined ->
+                      Root = "/tmp/anti/level",
+                      <<P:128/integer>> = md5(term_to_binary({erlang:monotonic_time(), make_ref()})),
+                      filename:join(Root, integer_to_list(P));
+                  SegmentPath ->
+                      SegmentPath
+              end,
+
+    DefaultWriteBufferMin = 4 * 1024 * 1024,
+    DefaultWriteBufferMax = 14 * 1024 * 1024,
+    ConfigVars = get_env(anti_entropy_leveldb_opts,
+                         [{write_buffer_size_min, DefaultWriteBufferMin},
+                          {write_buffer_size_max, DefaultWriteBufferMax}]),
+    Config = orddict:from_list(ConfigVars),
+
+    %% Use a variable write buffer size to prevent against all buffers being
+    %% flushed to disk at once when under a heavy uniform load.
+    WriteBufferMin = proplists:get_value(write_buffer_size_min, Config, DefaultWriteBufferMin),
+    WriteBufferMax = proplists:get_value(write_buffer_size_max, Config, DefaultWriteBufferMax),
+    {Offset, _} = rand:uniform_s(1 + WriteBufferMax - WriteBufferMin, erlang:timestamp()),
+    WriteBufferSize = WriteBufferMin + Offset,
+    Config2 = orddict:store(write_buffer_size, WriteBufferSize, Config),
+    Config3 = orddict:erase(write_buffer_size_min, Config2),
+    Config4 = orddict:erase(write_buffer_size_max, Config3),
+    Config5 = orddict:store(is_internal_db, true, Config4),
+    Config6 = orddict:store(use_bloomfilter, true, Config5),
+    Options = orddict:store(create_if_missing, true, Config6),
+
+    ok = filelib:ensure_dir(DataDir),
+    {ok, Ref} = eleveldb:open(DataDir, Options),
+    State#state{ref=Ref, path=DataDir}.
+-else.
 new_segment_store(Opts, State) ->
     DataDir = case proplists:get_value(segment_path, Opts) of
                   undefined ->
@@ -724,6 +759,7 @@ new_segment_store(Opts, State) ->
     ok = filelib:ensure_dir(DataDir),
     {ok, Ref} = eleveldb:open(DataDir, Options),
     State#state{ref=Ref, path=DataDir}.
+-endif.
 
 -spec share_segment_store(hashtree(), hashtree()) -> hashtree().
 share_segment_store(State, #state{ref=Ref, path=Path}) ->

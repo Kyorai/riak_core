@@ -135,6 +135,18 @@ rfc1123_to_now(String) when is_list(String) ->
 %% @spec make_tmp_dir() -> string()
 %% @doc Create a unique directory in /tmp.  Returns the path
 %%      to the new directory.
+-ifdef(rand_module).
+make_tmp_dir() ->
+    TmpId = io_lib:format("riptemp.~p",
+                          [erlang:phash2({rand:uniform(),self()})]),
+    TempDir = filename:join("/tmp", TmpId),
+    case filelib:is_dir(TempDir) of
+        true -> make_tmp_dir();
+        false ->
+            ok = file:make_dir(TempDir),
+            TempDir
+    end.
+-else.
 make_tmp_dir() ->
     TmpId = io_lib:format("riptemp.~p",
                           [erlang:phash2({random:uniform(),self()})]),
@@ -145,6 +157,7 @@ make_tmp_dir() ->
             ok = file:make_dir(TempDir),
             TempDir
     end.
+-endif.
 
 %% @doc Atomically/safely (to some reasonable level of durablity)
 %% replace file `FN' with `Data'. NOTE: since 2.0.3 semantic changed
@@ -232,6 +245,17 @@ md5(Bin) ->
     crypto:md5(Bin).
 -endif.
 
+-ifdef(rand_module).
+seed() ->
+    %% We need to do this since passing in a seed that isn't
+    %% properly formated causes horrors!
+    OldSeed = rand:seed(),
+    Result = rand:seed({erlang:phash2([node()]),
+                          erlang:monotonic_time(),
+                          erlang:unique_integer()}),
+    rand:seed(OldSeed),
+    Result.
+-else.
 seed() ->
     %% We need to do this since passing in a seed that isn't
     %% properly formated causes horrors!
@@ -241,6 +265,7 @@ seed() ->
                           erlang:unique_integer()}),
     random:seed(OldSeed),
     Result.
+-endif.
 
 %% @spec unique_id_62() -> string()
 %% @doc Create a random identifying integer, returning its string
@@ -626,11 +651,19 @@ orddict_delta(A, B) ->
                           end, Merged),
     Diff.
 
+-ifdef(rand_module).
+shuffle(L) ->
+    N = 134217727, %% Largest small integer on 32-bit Erlang
+    L2 = [{rand:uniform(N), E} || E <- L],
+    L3 = [E || {_, E} <- lists:sort(L2)],
+    L3.
+-else.
 shuffle(L) ->
     N = 134217727, %% Largest small integer on 32-bit Erlang
     L2 = [{random:uniform(N), E} || E <- L],
     L3 = [E || {_, E} <- lists:sort(L2)],
     L3.
+-endif.
 
 %% Returns a forced-lowercase architecture for this node
 -spec get_arch () -> string().
@@ -1184,5 +1217,3 @@ proxy_spawn_test() ->
     end.
 
 -endif.
-
-

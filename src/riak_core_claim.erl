@@ -379,6 +379,38 @@ choose_claim_v3(Ring, ClaimNode) ->
                                                 ?DEF_TARGET_N)}],
     choose_claim_v3(Ring, ClaimNode, Params).
 
+-ifdef(rand_module).
+choose_claim_v3(Ring, _ClaimNode, Params) ->
+    S = length(riak_core_ring:active_members(Ring)),
+    Q = riak_core_ring:num_partitions(Ring),
+    TN = proplists:get_value(target_n_val, Params, ?DEF_TARGET_N),
+    Wants = wants(Ring),
+    lager:debug("Claim3 started: S=~p Q=~p TN=~p\n", [S, Q, TN]),
+    lager:debug("       wants: ~p\n", [Wants]),
+    {Partitions, Owners} = lists:unzip(riak_core_ring:all_owners(Ring)),
+
+    %% Seed the random number generator for predictable results
+    %% run the claim, then put it back if possible
+    OldSeed = rand:seed(proplists:get_value(seed, Params, {1,2,3})),
+    {NewOwners, NewMetrics} = claim_v3(Wants, Owners, Params),
+    case OldSeed of
+        undefined ->
+            ok;
+        _ ->
+            {_,_,_} = rand:seed(OldSeed),
+            ok
+    end,
+
+    lager:debug("Claim3 metrics: ~p\n", [NewMetrics]),
+    %% Build a new ring from it
+    NewRing = lists:foldl(fun({_P, OldOwn, OldOwn}, R0) ->
+                                  R0;
+                             ({P, _OldOwn, NewOwn}, R0) ->
+                                  riak_core_ring:transfer_node(P, NewOwn, R0)
+                          end, Ring,
+                          lists:zip3(Partitions, Owners, NewOwners)),
+    riak_core_ring:update_meta(claimed, {claim_v3, Wants}, NewRing).
+-else.
 choose_claim_v3(Ring, _ClaimNode, Params) ->
     S = length(riak_core_ring:active_members(Ring)),
     Q = riak_core_ring:num_partitions(Ring),
@@ -409,6 +441,7 @@ choose_claim_v3(Ring, _ClaimNode, Params) ->
                           end, Ring, 
                           lists:zip3(Partitions, Owners, NewOwners)),
     riak_core_ring:update_meta(claimed, {claim_v3, Wants}, NewRing).
+-endif.
 
 %%
 %% Claim V3 - unlike the v1/v2 algorithms, v3 treats claim as an optimization problem.
@@ -1026,8 +1059,13 @@ random_el(L) ->
 urand(High) ->
     urand(1, High).
 
+-ifdef(rand_module).
+urand(Low, High) ->
+    Low + rand:uniform(High - Low + 1) - 1.
+-else.
 urand(Low, High) ->
     Low + random:uniform(High - Low + 1) - 1.
+-endif.
 
 %% @private
 %% return all the indices within TN of Indices

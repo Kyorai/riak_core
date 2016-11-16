@@ -485,6 +485,16 @@ random_peer(Root, State=#state{all_members=All}) ->
     end.
 
 %% picks random node from ordset
+-ifdef(rand_module).
+random_other_node(OrdSet) ->
+    Size = ordsets:size(OrdSet),
+    case Size of
+        0 -> undefined;
+        _ ->
+            lists:nth(rand:uniform(Size),
+                     ordsets:to_list(OrdSet))
+    end.
+-else.
 random_other_node(OrdSet) ->
     Size = ordsets:size(OrdSet),
     case Size of
@@ -493,6 +503,7 @@ random_other_node(OrdSet) ->
             lists:nth(random:uniform(Size),
                      ordsets:to_list(OrdSet))
     end.
+-endif.
 
 ack_outstanding(MessageId, Mod, Round, Root, From, State=#state{outstanding=All}) ->
     Existing = existing_outstanding(From, All),
@@ -593,6 +604,39 @@ reset_peers(AllMembers, EagerPeers, LazyPeers, State) ->
 all_broadcast_members(Ring) ->
     riak_core_ring:all_members(Ring).
 
+-ifdef(rand_module).
+init_peers(Members) ->
+    case length(Members) of
+        1 ->
+            %% Single member, must be ourselves
+            InitEagers = [],
+            InitLazys  = [];
+        2 ->
+            %% Two members, just eager push to the other
+            InitEagers = Members -- [node()],
+            InitLazys  = [];
+        N when N < 5 ->
+            %% 2 to 4 members, start with a fully connected tree
+            %% with cycles. it will be adjusted as needed
+            Tree = riak_core_util:build_tree(1, Members, [cycles]),
+            InitEagers = orddict:fetch(node(), Tree),
+            InitLazys  = [lists:nth(rand:uniform(N - 2), Members -- [node() | InitEagers])];
+        N when N < 10 ->
+            %% 5 to 9 members, start with gossip tree used by
+            %% riak_core_gossip. it will be adjusted as needed
+            Tree = riak_core_util:build_tree(2, Members, [cycles]),
+            InitEagers = orddict:fetch(node(), Tree),
+            InitLazys  = [lists:nth(rand:uniform(N - 3), Members -- [node() | InitEagers])];
+        N ->
+            %% 10 or more members, use a tree similar to riak_core_gossip
+            %% but with higher fanout (larger initial eager set size)
+            NEagers = round(math:log(N) + 1),
+            Tree = riak_core_util:build_tree(NEagers, Members, [cycles]),
+            InitEagers = orddict:fetch(node(), Tree),
+            InitLazys  = [lists:nth(rand:uniform(N - (NEagers + 1)), Members -- [node() | InitEagers])]
+    end,
+    {InitEagers, InitLazys}.
+-else.
 init_peers(Members) ->
     case length(Members) of
         1 ->
@@ -624,3 +668,4 @@ init_peers(Members) ->
             InitLazys  = [lists:nth(random:uniform(N - (NEagers + 1)), Members -- [node() | InitEagers])]
     end,
     {InitEagers, InitLazys}.
+-endif.

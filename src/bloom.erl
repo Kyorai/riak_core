@@ -192,11 +192,19 @@ bitarray_get(I, A) ->
 
 simple_shuffle(L, N) ->
     lists:sublist(simple_shuffle(L), 1, N).
+-ifdef(rand_module).
+simple_shuffle(L) ->
+    N = 1000 * length(L),
+    L2 = [{rand:uniform(N), E} || E <- L],
+    {_, L3} = lists:unzip(lists:keysort(1, L2)),
+    L3.
+-else.
 simple_shuffle(L) ->
     N = 1000 * length(L),
     L2 = [{random:uniform(N), E} || E <- L],
     {_, L3} = lists:unzip(lists:keysort(1, L2)),
     L3.
+-endif.
 
 fixed_case_test_() ->
     {timeout, 100, fun() -> fixed_case(bloom(5000), 5000, 0.001) end}.

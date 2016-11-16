@@ -69,6 +69,11 @@ start_set_net_ticktime_daemon(Node, Time, true) ->
                                 ok
                         end
                 end);
+start_set_net_ticktime_daemon(Node, _Time, false) ->
+    lager:info("Not starting tick daemon on ~p. Capability unsupported. "
+               "Some nodes in the Riak cluster do not have ~p loaded\n",
+               [Node, ?MODULE]),
+    ok.
 -else.
 start_set_net_ticktime_daemon(Node, Time, true) ->
     EbinDir = filename:dirname(code:which(?MODULE)),
@@ -100,12 +105,12 @@ start_set_net_ticktime_daemon(Node, Time, true) ->
                                 ok
                         end
                 end);
--endif.
 start_set_net_ticktime_daemon(Node, _Time, false) ->
     lager:info("Not starting tick daemon on ~p. Capability unsupported. "
                "Some nodes in the Riak cluster do not have ~p loaded\n",
                [Node, ?MODULE]),
     ok.
+-endif.
 
 stop_set_net_ticktime_daemon(Node) ->
     Capability = riak_core_capability:get({riak_core, net_ticktime}),

@@ -78,7 +78,8 @@
          job_class_enabled/1,
          job_class_enabled/2,
          job_class_disabled_message/2,
-         report_job_request_disposition/6
+         report_job_request_disposition/6,
+         rand_bytes/1
         ]).
 
 -include("riak_core_vnode.hrl").
@@ -865,6 +866,14 @@ report_job_request_disposition(false, Class, Mod, Func, Line, Client) ->
     lager:log(warning,
         [{pid, erlang:self()}, {module, Mod}, {function, Func}, {line, Line}],
         "Request '~p' disabled from ~p", [Class, Client]).
+
+ifdef(crypto_strong_rand_bytes).
+rand_bytes(Bin) ->
+    crypto:strong_rand_bytes(Bin).
+-else.
+rand_bytes(Bin) ->
+    crypto:rand_bytes(Bin).
+-endif.
 
 %% ===================================================================
 %% Preflist utility functions

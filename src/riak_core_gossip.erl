@@ -433,6 +433,12 @@ attempt_simple_transfer(Seed, Ring, [{P, Exit}|Rest], TargetN, Exit, Idx, Last) 
                       lists:keyreplace(Chosen, 1, Last, {Chosen, Idx}))
             end
     end;
+attempt_simple_transfer(Seed, Ring, [{_, N}|Rest], TargetN, Exit, Idx, Last) ->
+    %% just keep track of seeing this node
+    attempt_simple_transfer(Seed, Ring, Rest, TargetN, Exit, Idx+1,
+                            lists:keyreplace(N, 1, Last, {N, Idx}));
+attempt_simple_transfer(_, Ring, [], _, _, _, _) ->
+    {ok, Ring}.
 -else.
 attempt_simple_transfer(Seed, Ring, [{P, Exit}|Rest], TargetN, Exit, Idx, Last) ->
     %% handoff
@@ -466,10 +472,10 @@ attempt_simple_transfer(Seed, Ring, [{P, Exit}|Rest], TargetN, Exit, Idx, Last) 
                       lists:keyreplace(Chosen, 1, Last, {Chosen, Idx}))
             end
     end;
--endif.
 attempt_simple_transfer(Seed, Ring, [{_, N}|Rest], TargetN, Exit, Idx, Last) ->
     %% just keep track of seeing this node
     attempt_simple_transfer(Seed, Ring, Rest, TargetN, Exit, Idx+1,
                             lists:keyreplace(N, 1, Last, {N, Idx}));
 attempt_simple_transfer(_, Ring, [], _, _, _, _) ->
     {ok, Ring}.
+-endif.

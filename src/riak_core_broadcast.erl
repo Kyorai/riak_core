@@ -503,7 +503,7 @@ random_other_node(OrdSet) ->
             lists:nth(random:uniform(Size),
                      ordsets:to_list(OrdSet))
     end.
--indef.
+-endif.
 
 ack_outstanding(MessageId, Mod, Round, Root, From, State=#state{outstanding=All}) ->
     Existing = existing_outstanding(From, All),

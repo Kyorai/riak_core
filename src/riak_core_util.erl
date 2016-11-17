@@ -79,10 +79,18 @@
          job_class_enabled/2,
          job_class_disabled_message/2,
          report_job_request_disposition/6,
-         rand_bytes/1
+         rand_bytes/1,
+         uniform/1,
+         uniform_s/2,
+         raw_seed/0,
+         seed/1
         ]).
 
 -include("riak_core_vnode.hrl").
+
+-define(PRIME1, 30269).
+-define(PRIME2, 30307).
+-define(PRIME3, 30323).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -138,7 +146,7 @@ rfc1123_to_now(String) when is_list(String) ->
 %%      to the new directory.
 make_tmp_dir() ->
     TmpId = io_lib:format("riptemp.~p",
-                          [erlang:phash2({random:uniform(),self()})]),
+                          [erlang:phash2({riak_core_util:uniform(),self()})]),
     TempDir = filename:join("/tmp", TmpId),
     case filelib:is_dir(TempDir) of
         true -> make_tmp_dir();
@@ -233,15 +241,7 @@ md5(Bin) ->
     crypto:md5(Bin).
 -endif.
 
-seed() ->
-    %% We need to do this since passing in a seed that isn't
-    %% properly formated causes horrors!
-    OldSeed = random:seed(),
-    Result = random:seed({erlang:phash2([node()]),
-                          erlang:monotonic_time(),
-                          erlang:unique_integer()}),
-    random:seed(OldSeed),
-    Result.
+
 
 %% @spec unique_id_62() -> string()
 %% @doc Create a random identifying integer, returning its string
@@ -629,7 +629,7 @@ orddict_delta(A, B) ->
 
 shuffle(L) ->
     N = 134217727, %% Largest small integer on 32-bit Erlang
-    L2 = [{random:uniform(N), E} || E <- L],
+    L2 = [{riak_core_util:uniform(N), E} || E <- L],
     L3 = [E || {_, E} <- lists:sort(L2)],
     L3.
 
@@ -867,12 +867,58 @@ report_job_request_disposition(false, Class, Mod, Func, Line, Client) ->
         [{pid, erlang:self()}, {module, Mod}, {function, Func}, {line, Line}],
         "Request '~p' disabled from ~p", [Class, Client]).
 
-ifdef(crypto_strong_rand_bytes).
+-ifdef(crypto_strong_rand_bytes).
 rand_bytes(Bin) ->
     crypto:strong_rand_bytes(Bin).
 -else.
 rand_bytes(Bin) ->
     crypto:rand_bytes(Bin).
+-endif.
+
+-ifdef(rand_module).
+uniform(N) ->
+    rand:uniform(N).
+
+uniform_s(N, State) ->
+    {rand:uniform(N), State}.
+
+raw_seed() ->
+    %% rand module does not need it, because there used be a seed/0 function, name it raw_seed/0
+    {0,0,0}.
+
+seed({A1, A2, A3}) ->
+    %% copy from the random.erl
+    {(abs(A1) rem (?PRIME1-1)) + 1,   % Avoid seed numbers that are
+     (abs(A2) rem (?PRIME2-1)) + 1,   % even divisors of the
+     (abs(A3) rem (?PRIME3-1)) + 1}.  % corresponding primes.
+
+seed() ->
+    %% rand module uses a different seed method, this function is used to be keep backward compatibility
+    {0, 0, 0}.
+
+-else.
+uniform(N) ->
+    random:uniform(N).
+
+uniform_s(N, State) ->
+    random:uniform_s(N, State).
+
+raw_seed() ->
+    random:seed().
+
+seed({A, B, C}) ->
+    random:seed({A, B, C}).
+
+seed() ->
+    %% We need to do this since passing in a seed that isn't
+    %% properly formated causes horrors!
+    OldSeed = random:seed(),
+    Result = random:seed({erlang:phash2([node()]),
+                          erlang:monotonic_time(),
+                          erlang:unique_integer()}),
+    random:seed(OldSeed),
+    Result.
+
 -endif.
 
 %% ===================================================================

@@ -390,13 +390,13 @@ choose_claim_v3(Ring, _ClaimNode, Params) ->
 
     %% Seed the random number generator for predictable results
     %% run the claim, then put it back if possible
-    OldSeed = riak_core_util:raw_seed(proplists:get_value(seed, Params, {1,2,3})),
+    OldSeed = riak_core_util:seed(proplists:get_value(seed, Params, {1,2,3})),
     {NewOwners, NewMetrics} = claim_v3(Wants, Owners, Params),
     case OldSeed of
         undefined ->
             ok;
         _ ->
-            {_,_,_} = riak_core_util:raw_seed(OldSeed),
+            {_,_,_} = riak_core_util:seed(OldSeed),
             ok
     end,
 

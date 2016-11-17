@@ -867,7 +867,7 @@ report_job_request_disposition(false, Class, Mod, Func, Line, Client) ->
         [{pid, erlang:self()}, {module, Mod}, {function, Func}, {line, Line}],
         "Request '~p' disabled from ~p", [Class, Client]).
 
-ifdef(crypto_strong_rand_bytes).
+-ifdef(crypto_strong_rand_bytes).
 rand_bytes(Bin) ->
     crypto:strong_rand_bytes(Bin).
 -else.

@@ -24,7 +24,7 @@ uniform_s(N, State) ->
     {rand:uniform(N), State}.
 
 seed() ->
-    %% rand module does not need it, because there used be a seed/0 function, name it raw_seed/0
+    %% rand module does not need it, just return the same value
     {0,0,0}.
 
 seed({A1, A2, A3}) ->

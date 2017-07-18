@@ -3,7 +3,7 @@
 %% riak_core_coverage_fsm: Distribute work to a covering set of VNodes.
 %%
 %%
-%% Copyright (c) 2007-2011 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2015 Basho Technologies, Inc.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -33,7 +33,7 @@
 %%      the module implementing this behavior.
 %%
 %%      Modules implementing this behavior should return
-%%      a 5 member tuple from their init function that looks
+%%      a 9 member tuple from their init function that looks
 %%      like this:
 %%
 %%         `{Request, VNodeSelector, NVal, PrimaryVNodeCoverage,
@@ -44,20 +44,22 @@
 %%      <ul>
 %%      <li>Request - An opaque data structure that is used by
 %%        the VNode to implement the specific coverage request.</li>
-%%      <li>VNodeSelector - Either the atom `all' to indicate that
-%%        enough VNodes must be available to achieve a minimal
-%%        covering set or `allup' to use whatever VNodes are
-%%        available even if they do not represent a fully covering
-%%        set.</li>
+%%      <li>VNodeSelector - If using the standard riak_core_coverage_plan
+%%          module, 'all' for all VNodes or 'allup' for all reachable.
+%%          If using an alternative coverage plan generator, whatever
+%%          value is useful to its `create_plan' function; will be passed
+%%          as the first argument.</li>
 %%      <li>NVal - Indicates the replication factor and is used to
 %%        accurately create a minimal covering set of VNodes.</li>
 %%      <li>PrimaryVNodeCoverage - The number of primary VNodes
 %%      from the preference list to use in creating the coverage
-%%      plan.</li>
+%%      plan. Typically just 1.</li>
 %%      <li>NodeCheckService - The service to use to check for available
 %%      nodes (e.g. riak_kv).</li>
 %%      <li>VNodeMaster - The atom to use to reach the vnode master module.</li>
 %%      <li>Timeout - The timeout interval for the coverage request.</li>
+%%      <li>PlannerMod - The module which defines `create_plan' and optionally
+%%          functions to support a coverage query API</li>
 %%      <li>State - The initial state for the module.</li>
 %%      </ul>
 -module(riak_core_coverage_fsm).
@@ -86,38 +88,71 @@
          code_change/4]).
 
 -type mod_state() :: term().
--callback init(from(), RequestArgs :: [term()]) ->
-    {Request :: term(), vnode_selector(), NVal :: pos_integer(), primary_vnode_coverage(),
-     NodeCheckService :: module(), VNodeMaster :: atom(), timeout(), mod_state()}.
--callback process_results(Results :: term(), mod_state()) ->
-    {ok, mod_state()} |
-    {done, mod_state()} |
-    {error, term()}.
--callback finish(clean | {error, term()}, mod_state()) -> {stop, normal, mod_state()}.
 
 -define(DEFAULT_TIMEOUT, 60000*8).
 
 -type req_id() :: non_neg_integer().
 -type from() :: {atom(), req_id(), pid()}.
--type vnode_selector() :: all | allup.
+-type request() :: tuple().
+-type index() :: chash:index_as_int().
 -type primary_vnode_coverage() :: all | pos_integer().
 
--record(state, {coverage_vnodes :: [{non_neg_integer(), node()}],
+-record(state, {coverage_vnodes :: [{non_neg_integer(), node()}] | undefined,
                 mod :: atom(),
                 mod_state :: mod_state(),
                 n_val :: pos_integer(),
                 node_check_service :: module(),
+                %% `vnode_selector' can be any useful value for different
+                %% `riak_core' applications that define their own coverage
+                %% plan module
                 vnode_selector :: vnode_selector(),
                 pvc :: primary_vnode_coverage(),
                 request :: tuple(),
                 req_id :: req_id(),
-                required_responses :: pos_integer(),
+                required_responses=1 :: pos_integer(),
                 response_count=0 :: non_neg_integer(),
                 timeout :: timeout(),
                 vnode_master :: atom(),
                 plan_fun :: function(),
-                process_fun :: function()
+                process_fun :: function(),
+                coverage_plan_fn :: function()
                }).
+
+-callback init(From::from(), RequestArgs::any()) ->
+    {
+      Request :: request(),
+      VNodeSelector:: vnode_selector(),
+      NVal :: pos_integer(),
+      PrimaryVNodeCoverage :: primary_vnode_coverage(),
+      NodeCheckService :: module(),
+      VNodeMaster :: atom(),
+      Timeout :: pos_integer(),
+      CoveragePlanRet :: atom()
+                       | fun((riak_core_coverage_plan:vnode_selector(),
+                              pos_integer(),
+                              pos_integer(),
+                              riak_core_coverage_plan:req_id(),
+                              atom(), term()) ->
+                                    {error, term()} |
+                                    riak_core_coverage_plan:coverage_plan()),
+      ModState :: tuple()
+    }.
+
+-callback process_results(Results :: term(), ModState :: tuple()) ->
+    {ok, NewModState :: tuple()} |
+    {done, NewModState :: tuple()} |
+    {error, Reason :: term()}.
+
+-callback process_results(VNode :: pos_integer(),
+                          Results::term(), ModState :: tuple()) ->
+    {ok, NewModState :: tuple()} |
+    {done, NewModState :: tuple()} |
+    {error, Reason :: term()}.
+-optional_callbacks([process_results/3]).
+
+-callback finish({error, Reason::term()} | clean, ModState :: tuple()) ->
+    {error, Reason::term()} |
+    {'stop', Reason::term(), ModState :: tuple()}.
 
 %% ===================================================================
 %% Public API
@@ -152,18 +187,37 @@ test_link(Mod, From, RequestArgs, _Options, StateProps) ->
 %% ====================================================================
 %% gen_fsm callbacks
 %% ====================================================================
-
 %% @private
 init([Mod,
       From={_, ReqId, _},
       RequestArgs]) ->
-    Exports = Mod:module_info(exports),
     {Request, VNodeSelector, NVal, PrimaryVNodeCoverage,
-     NodeCheckService, VNodeMaster, Timeout, ModState} =
+     NodeCheckService, VNodeMaster, Timeout, CoveragePlanRet, ModState} =
         Mod:init(From, RequestArgs),
+
+    %% As part of fixing listkeys, we have changed the API model so
+    %% that modules with riak_core_coverage_fsm behaviour now return a
+    %% coverage plan function rather than a module.  The four
+    %% core_coverage_fsm modules used regularly in RiakTS have all
+    %% been changed to return functions.  
+    %%
+    %% However, to ensure backwards compatibility with any modules
+    %% that may have been missed, we add a check here in case someone
+    %% is still sending us back a module atom.  In that case, convert
+    %% the coverage plan module to the appropriate function for use
+    %% further down the stack
+
+    CoveragePlanFn = 
+        case is_atom(CoveragePlanRet) of
+            true ->
+                fun CoveragePlanRet:create_plan/6;
+            _ ->
+                CoveragePlanRet
+        end,
+
     maybe_start_timeout_timer(Timeout),
-    PlanFun = plan_callback(Mod, Exports),
-    ProcessFun = process_results_callback(Mod, Exports),
+    PlanFun = plan_callback(Mod),
+    ProcessFun = process_results_callback(Mod),
     StateData = #state{mod=Mod,
                        mod_state=ModState,
                        node_check_service=NodeCheckService,
@@ -175,7 +229,8 @@ init([Mod,
                        timeout=infinity,
                        vnode_master=VNodeMaster,
                        plan_fun = PlanFun,
-                       process_fun = ProcessFun},
+                       process_fun = ProcessFun,
+                       coverage_plan_fn = CoveragePlanFn},
     {ok, initialize, StateData, 0};
 init({test, Args, StateProps}) ->
     %% Call normal init
@@ -203,6 +258,30 @@ maybe_start_timeout_timer(Timeout) ->
     gen_fsm:start_timer(Timeout, {timer_expired, Timeout}),
     ok.
 
+%% @private
+find_plan(_CoveragePlanFn, #vnode_coverage{}=Plan, _NVal, _PVC, _ReqId, _Service,
+          _Request) ->
+    interpret_plan(Plan);
+find_plan(CoveragePlanFn, Target, NVal, PVC, ReqId, Service, Request) ->
+    CoveragePlanFn(Target, NVal, PVC, ReqId, Service, Request).
+
+%% @private
+%% Take a `vnode_coverage' record and interpret it as a mini coverage plan
+-spec interpret_plan(vnode_coverage()) ->
+                            {list({index(), node()}),
+                             list({index(), list(index())|tuple()})}.
+interpret_plan(#vnode_coverage{vnode_identifier  = TargetHash,
+                               partition_filters = [],
+                               subpartition = undefined}) ->
+    {[{TargetHash, node()}], []};
+interpret_plan(#vnode_coverage{vnode_identifier  = TargetHash,
+                               partition_filters = HashFilters,
+                               subpartition = undefined}) ->
+    {[{TargetHash, node()}], [{TargetHash, HashFilters}]};
+interpret_plan(#vnode_coverage{vnode_identifier = TargetHash,
+                               subpartition     = {Mask, BSL}}) ->
+    {[{TargetHash, node()}], [{TargetHash, {Mask, BSL}}]}.
+
 
 %% @private
 initialize(timeout, StateData0=#state{mod=Mod,
@@ -215,12 +294,15 @@ initialize(timeout, StateData0=#state{mod=Mod,
                                       req_id=ReqId,
                                       timeout=Timeout,
                                       vnode_master=VNodeMaster,
-                                      plan_fun = PlanFun}) ->
-    CoveragePlan = riak_core_coverage_plan:create_plan(VNodeSelector,
-                                                       NVal,
-                                                       PVC,
-                                                       ReqId,
-                                                       NodeCheckService),
+                                      plan_fun = PlanFun,
+                                      coverage_plan_fn = CoveragePlanFn}) ->
+    CoveragePlan = find_plan(CoveragePlanFn,
+                             VNodeSelector,
+                             NVal,
+                             PVC,
+                             ReqId,
+                             NodeCheckService,
+                             Request),
     case CoveragePlan of
         {error, Reason} ->
             Mod:finish({error, Reason}, ModState);
@@ -297,27 +379,42 @@ terminate(Reason, _StateName, _State) ->
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
 
-plan_callback(Mod, Exports) ->
-    case exports(plan, Exports) of
-        true ->
-            fun(CoverageVNodes, ModState) ->
-                    Mod:plan(CoverageVNodes, ModState) end;
-        _ -> fun(_, ModState) ->
-                     {ok, ModState} end
+%% This is to avoid expensive module_info calls, which were consuming
+%% 30% of the query-path time for small queries
+%%
+%% Instead we try Mod:plan/2, if undef, we define it.  On success or
+%% match error on atoms, we pass on Mod:plan/2 
+
+plan_callback(Mod) ->
+    SuccessFun = fun(CoverageVNodes, ModState) ->
+                         Mod:plan(CoverageVNodes, ModState) end,
+    try
+        SuccessFun(a, b),
+        SuccessFun
+    catch
+        error:undef ->
+            fun(_, ModState) ->
+                    {ok, ModState} end;
+        _:_ -> %% If Mod:plan(a, b) fails on atoms
+            SuccessFun
     end.
 
-process_results_callback(Mod, Exports) ->
-    case exports_arity(process_results, 3, Exports) of
-        true ->
-            fun(VNode, Results, ModState) ->
-                    Mod:process_results(VNode, Results, ModState) end;
-        false ->
+%% This is to avoid expensive module_info calls, which were consuming
+%% 30% of the query-path time for small queries
+%%
+%% Instead we try Mod:process_results/3, if undef, we define it.  On success or
+%% match error on atoms, we pass on Mod:process_results/3
+
+process_results_callback(Mod) ->
+    SuccessFun = fun(VNode, Results, ModState) ->
+                         Mod:process_results(VNode, Results, ModState) end,
+    try
+        SuccessFun(a,b,c),
+        SuccessFun
+    catch
+        error:undef ->
             fun(_VNode, Results, ModState) ->
-                    Mod:process_results(Results, ModState) end
+                    Mod:process_results(Results, ModState) end;
+        _:_ -> %% If Mod:plan(a, b, c) fails on atoms
+            SuccessFun
     end.
-
-exports(Function, Exports) ->
-    proplists:is_defined(Function, Exports).
-
-exports_arity(Function, Arity, Exports) ->
-    lists:member(Arity, proplists:get_all_values(Function, Exports)).

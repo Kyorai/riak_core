@@ -144,21 +144,20 @@
 
 -define(CHSTATE, #chstate_v2).
 -record(chstate_v2, {
-    nodename :: term(),          % the Node responsible for this chstate
-    vclock   :: vclock:vclock() | undefined, % for this chstate object, entries are
-                                 % {Node, Ctr}
-    chring   :: chash:chash(),   % chash ring of {IndexAsInt, Node} mappings
-    meta     :: riak_core_dict() | undefined,
-                                 % dict of cluster-wide other data (primarily
-                                 % bucket N-value, etc)
-
-    clustername :: {term(), term()},
-    next     :: [{integer(), term(), term(), [module()], awaiting | complete}],
-    members  :: [{node(), {member_status(), vclock:vclock(), [{atom(), term()}]}}],
-    claimant :: term(),
-    seen     :: [{term(), vclock:vclock()}],
-    rvsn     :: vclock:vclock()
-}).
+          nodename :: term(),          % the Node responsible for this chstate
+          vclock   :: vclock:vclock() | undefined, % for this chstate object, entries are
+                                                % {Node, Ctr}
+          chring   :: chash:chash() | undefined,   % chash ring of {IndexAsInt, Node} mappings
+          meta     :: riak_core_dict() | undefined,
+                                                % dict of cluster-wide other data (primarily
+                                                % bucket N-value, etc)
+          clustername :: {term(), term()} | undefined,
+          next     :: [{integer(), term(), term(), [module()], awaiting | complete}],
+          members  :: [{node(), {member_status(), vclock:vclock(), [{atom(), term()}]}}] | undefined,
+          claimant :: term(),
+          seen     :: [{term(), vclock:vclock()}] | undefined,
+          rvsn     :: vclock:vclock() | undefined
+         }).
 
 %% Legacy chstate
 -record(chstate, {
@@ -347,7 +346,7 @@ fresh(RingSize, NodeName) ->
     VClock=vclock:increment(NodeName, vclock:fresh()),
     GossipVsn = riak_core_gossip:gossip_version(),
     ?CHSTATE{nodename=NodeName,
-             clustername={NodeName, erlang:now()},
+             clustername={NodeName, erlang:timestamp()},
              members=[{NodeName, {valid, VClock, [{gossip_vsn, GossipVsn}]}}],
              chring=chash:fresh(RingSize, NodeName),
              next=[],
@@ -443,7 +442,7 @@ preflist(Key, State) -> chash:successors(Key, State?CHSTATE.chring).
 -spec random_node(State :: chstate()) -> Node :: term().
 random_node(State) ->
     L = all_members(State),
-    lists:nth(random:uniform(length(L)), L).
+    lists:nth(riak_core_rand:uniform(length(L)), L).
 
 %% @doc Return a partition index not owned by the node executing this function.
 %%      If this node owns all partitions, return any index.
@@ -452,7 +451,7 @@ random_other_index(State) ->
     L = [I || {I,Owner} <- ?MODULE:all_owners(State), Owner =/= node()],
     case L of
         [] -> hd(my_indices(State));
-        _ -> lists:nth(random:uniform(length(L)), L)
+        _ -> lists:nth(riak_core_rand:uniform(length(L)), L)
     end.
 
 -spec random_other_index(State :: chstate(), Exclude :: [term()]) -> chash:index_as_int() | no_indices.
@@ -462,7 +461,7 @@ random_other_index(State, Exclude) when is_list(Exclude) ->
               not lists:member(I, Exclude)],
     case L of
         [] -> no_indices;
-        _ -> lists:nth(random:uniform(length(L)), L)
+        _ -> lists:nth(riak_core_rand:uniform(length(L)), L)
     end.
 
 %% @doc Return a randomly-chosen node from amongst the owners other than this one.
@@ -472,7 +471,7 @@ random_other_node(State) ->
         [] ->
             no_node;
         L ->
-            lists:nth(random:uniform(length(L)), L)
+            lists:nth(riak_core_rand:uniform(length(L)), L)
     end.
 
 %% @doc Return a randomly-chosen active node other than this one.
@@ -482,7 +481,7 @@ random_other_active_node(State) ->
         [] ->
             no_node;
         L ->
-            lists:nth(random:uniform(length(L)), L)
+            lists:nth(riak_core_rand:uniform(length(L)), L)
     end.
 
 %% @doc Incorporate another node's state into our view of the Riak world.

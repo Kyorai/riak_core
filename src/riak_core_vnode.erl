@@ -124,6 +124,34 @@
 
 -callback delete(ModState::term()) -> {ok, NewModState::term()}.
 
+%% This commands are not executed inside the VNode, instead they are
+%% part of the vnode_proxy contract.
+%%
+%% The vnode_proxy will drop requests in an overload situation, when
+%% his happens one of the two handle_overload_* commands in the
+%% vnode module is called. This call happens **from the vnode proxy**
+%%
+%% These calls are wrapped in a catch() meaning that when they don't
+%% exist they will quietly fail. However the catch is hugely expensive
+%% leading to the sitaution that when there already is a overload
+%% the vnode proxy gets even worst overloaded.
+%%
+%% This is pretty bad since the proxy is supposed to protect against
+%% exactly this overload.
+%%
+%% So yea sorry, you're going to be forced to implement them, if nothing
+%% else just nop them out.
+%%
+%% BUT DO NOT call expensive functions from them there is a special hell
+%% for people doing that! (it's called overflowing message queue hell and is
+%% really nasty!)
+-callback handle_overload_command(Request::term(), Sender::sender(),
+                                  Idx::partition()) ->
+    ok.
+
+-callback handle_overload_info(Request::term(), Idx::partition()) ->
+    ok.
+
 %% handle_exit/3 is an optional behaviour callback that can be implemented.
 %% It will be called in the case that a process that is linked to the vnode
 %% process dies and allows the module using the behaviour to take appropriate
@@ -155,11 +183,11 @@
           modstate :: term(),
           forward :: node() | [{integer(), node()}],
           handoff_target=none :: none | {integer(), node()},
-          handoff_pid :: pid(),
-          handoff_type :: riak_core_handoff_manager:ho_type(),
+          handoff_pid :: pid() | undefined,
+          handoff_type :: riak_core_handoff_manager:ho_type() | undefined,
           pool_pid :: pid() | undefined,
           pool_config :: tuple() | undefined,
-          manager_event_timer :: reference(),
+          manager_event_timer :: reference() | undefined,
           inactivity_timeout :: non_neg_integer()
          }).
 
@@ -243,7 +271,7 @@ do_init(State = #state{index=Index, mod=Mod, forward=Forward}) ->
             end,
             riak_core_handoff_manager:remove_exclusion(Mod, Index),
             Timeout = app_helper:get_env(riak_core, vnode_inactivity_timeout, ?DEFAULT_TIMEOUT),
-            Timeout2 = Timeout + random:uniform(Timeout),
+            Timeout2 = Timeout + riak_core_rand:uniform(Timeout),
             State2 = State#state{modstate=ModState, inactivity_timeout=Timeout2,
                                  pool_pid=PoolPid, pool_config=PoolConfig},
             lager:debug("vnode :: ~p/~p :: ~p~n", [Mod, Index, Forward]),
@@ -420,7 +448,7 @@ vnode_handoff_command(Sender, Request, ForwardTo,
         {forward, NewModState} ->
             forward_request(HOType, Request, HOTarget, ForwardTo, Sender, State),
             continue(State, NewModState);
- 	{forward, NewReq, NewModState} ->
+        {forward, NewReq, NewModState} ->
             forward_request(HOType, NewReq, HOTarget, ForwardTo, Sender, State),
             continue(State, NewModState);
         {drop, NewModState} ->

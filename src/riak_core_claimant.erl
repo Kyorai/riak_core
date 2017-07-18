@@ -68,7 +68,7 @@
           %% applying a set of staged cluster changes. When commiting
           %% changes, the computed ring must match the previous planned
           %% ring to be allowed.
-          next_ring :: riak_core_ring(),
+          next_ring :: riak_core_ring() | undefined,
 
           %% Random number seed passed to remove_node to ensure the
           %% current randomized remove algorithm is deterministic
@@ -223,7 +223,7 @@ bucket_type_iterator() ->
 %%%===================================================================
 
 reassign_indices(CState) ->
-    reassign_indices(CState, [], erlang:now(), fun no_log/2).
+    reassign_indices(CState, [], riak_core_rand:rand_seed(), fun no_log/2).
 
 %%%===================================================================
 %%% Internal API helpers
@@ -250,7 +250,7 @@ maybe_filter_inactive_type(true, Default, Props) ->
 
 init([]) ->
     schedule_tick(),
-    {ok, #state{changes=[], seed=erlang:now()}}.
+    {ok, #state{changes=[], seed=riak_core_rand:rand_seed()}}.
 
 handle_call(clear, _From, State) ->
     State2 = clear_staged(State),
@@ -386,7 +386,7 @@ commit_staged(State) ->
         {ok, _} ->
             State2 = State#state{next_ring=undefined,
                                  changes=[],
-                                 seed=erlang:now()},
+                                 seed=riak_core_rand:rand_seed()},
             {ok, State2};
         not_changed ->
             {error, State};
@@ -434,7 +434,7 @@ maybe_commit_staged(Ring, NextRing, #state{next_ring=PlannedRing}) ->
 %%      call {@link clear/0}.
 clear_staged(State) ->
     remove_joining_nodes(),
-    State#state{changes=[], seed=erlang:now()}.
+    State#state{changes=[], seed=riak_core_rand:rand_seed()}.
 
 %% @private
 remove_joining_nodes() ->
@@ -656,7 +656,7 @@ maybe_force_ring_update(Ring) ->
     end.
 
 do_maybe_force_ring_update(Ring) ->
-    case compute_next_ring([], erlang:now(), Ring) of
+    case compute_next_ring([], riak_core_rand:rand_seed(), Ring) of
         {ok, NextRing} ->
             case same_plan(Ring, NextRing) of
                 false ->
@@ -699,24 +699,63 @@ get_type_status(_BucketType, undefined) ->
     undefined;
 get_type_status(BucketType, Props) ->
     case type_active(Props) of
-        true -> active;
-        false -> get_remote_type_status(BucketType, Props)
+        true  ->
+            active;
+        false ->
+            Is_ddl_compiled = is_ddl_compiled(get_remote_ddl_compiled_status(BucketType, Props)),
+            is_type_ready(
+                Props, get_type_status(BucketType), 
+                Is_ddl_compiled)
     end.
 
+%%
+all_members() ->
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    riak_core_ring:all_members(Ring).
+
 %% @private
-get_remote_type_status(BucketType, Props) ->
-    {ok, R} = riak_core_ring_manager:get_my_ring(),
-    Members = riak_core_ring:all_members(R),
-    {AllProps, BadNodes} = rpc:multicall(lists:delete(node(), Members),
-                                         riak_core_metadata,
-                                         get, [?BUCKET_TYPE_PREFIX, BucketType, [{default, []}]]),
+-spec get_type_status(BucketType::binary()) ->
+    {AllProps::[any()], BadNodes::[node()]}.
+get_type_status(BucketType) ->
+    rpc:multicall(all_members(),
+                  riak_core_metadata,
+                  get, [?BUCKET_TYPE_PREFIX, BucketType, [{default, []}]]).
+
+%%
+get_remote_ddl_compiled_status(BucketType, Props) ->
+    case proplists:get_value(ddl, Props) of
+        undefined ->
+            no_ddl_to_compile;
+        DDL ->
+            rpc:multicall(all_members(),
+                          riak_core_metadata_evt_sup,
+                          is_type_compiled, [BucketType, DDL])
+    end.
+
+%% Checks if the result of the call to is_type_compiled across the cluster.
+is_ddl_compiled(no_ddl_to_compile) ->
+    true;
+is_ddl_compiled({_, BadNodes}) when BadNodes =/= [] ->
+    false;
+is_ddl_compiled({Results, _}) ->
+    lists:all(fun(E) -> E == true end, Results).
+
+%% Check if this nodes and other nodes in the cluster have the same properties
+%% for a bucket type.
+-spec is_type_ready(Props::[proplists:property()],
+                    TypeReadyRpcResult::{[term()], [node()]},
+                    IsDDLCompiled::boolean()) -> created | ready.
+is_type_ready(_,_,false) ->
+    created;
+is_type_ready(Props, {AllProps, BadNodes}, _) ->
     SortedProps = lists:ukeysort(1, Props),
     %% P may be a {badrpc, ...} in addition to a list of properties when there are older nodes involved
     DiffProps = [P || P <- AllProps, (not is_list(P) orelse lists:ukeysort(1, P) =/= SortedProps)],
     case {DiffProps, BadNodes} of
         {[], []} -> ready;
-        %% unreachable nodes may or may not have correct value, so we assume they dont
-        {_, _} -> created
+        % unreachable nodes may or may not have correct value, so we assume
+        % they dont
+        {_,_} -> created
     end.
 
 %% @private
@@ -1097,7 +1136,7 @@ internal_ring_changed(Node, CState) ->
     %% Set cluster name if it is undefined
     case {IsClaimant, riak_core_ring:cluster_name(CState5)} of
         {true, undefined} ->
-            ClusterName = {Node, erlang:now()},
+            ClusterName = {Node, riak_core_rand:rand_seed()},
             {_,_} = riak_core_util:rpc_every_member(riak_core_ring_manager,
                                                     set_cluster_name,
                                                     [ClusterName],
@@ -1131,7 +1170,7 @@ do_claimant_quiet(Node, CState, Replacing, Seed) ->
     do_claimant(Node, CState, Replacing, Seed, fun no_log/2).
 
 do_claimant(Node, CState, Log) ->
-    do_claimant(Node, CState, [], erlang:now(), Log).
+    do_claimant(Node, CState, [], riak_core_rand:rand_seed(), Log).
 
 do_claimant(Node, CState, Replacing, Seed, Log) ->
     AreJoining = are_joining_nodes(CState),
@@ -1413,7 +1452,7 @@ handle_down_nodes(CState, Next) ->
                  case (OwnerLeaving and NextDown) of
                      true ->
                          Active = riak_core_ring:active_members(CState) -- [O],
-                         RNode = lists:nth(random:uniform(length(Active)),
+                         RNode = lists:nth(riak_core_rand:uniform(length(Active)),
                                            Active),
                          {Idx, O, RNode, Mods, Status};
                      _ ->
@@ -1513,3 +1552,84 @@ log(next, {Idx, Owner, NewOwner}) ->
     lager:debug("(pending) ~b :: ~p -> ~p~n", [Idx, Owner, NewOwner]);
 log(_, _) ->
     ok.
+
+%% ===================================================================
+%% EUnit tests
+%% ===================================================================
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+
+is_type_ready_empty_test() ->
+    ?assertEqual(
+        ready,
+        is_type_ready([], {[], []}, true)
+    ).
+
+is_type_ready_same_props_1_test() ->
+    P = [{a,1}],
+    ?assertEqual(
+        ready,
+        is_type_ready(P, {[P], []}, true)
+    ).
+
+is_type_ready_same_props_2_test() ->
+    P = [{a,1}],
+    ?assertEqual(
+        ready,
+        is_type_ready(P, {[P, P, P], []}, true)
+    ).
+
+is_type_ready_same_props_3_test() ->
+    P = [{b,2}, {a,1}, {c,3}],
+    ?assertEqual(
+        ready,
+        is_type_ready(P, {[P, P, P], []}, true)
+    ).
+
+is_type_ready_different_props_1_test() ->
+    ?assertEqual(
+        created,
+        is_type_ready([{a,1}], {[[{a,2}]], []}, true)
+    ).
+
+is_type_ready_different_props_2_test() ->
+    P = [{a,1}],
+    ?assertEqual(
+        created,
+        is_type_ready(P, {[P, [{a,2}]], []}, true)
+    ).
+
+is_type_ready_bad_nodes_test() ->
+    P = [{b,2}, {a,1}, {c,3}],
+    ?assertEqual(
+        created,
+        is_type_ready(P, {[P], ['riak@localhost']}, true)
+    ).
+
+is_ddl_compiled_1_test() ->
+    ?assertEqual(
+        true,
+        is_ddl_compiled(no_ddl_to_compile)
+    ).
+
+is_ddl_compiled_2_test() ->
+    ?assertEqual(
+        false,
+        is_ddl_compiled({[true], [a_node]})
+    ).
+
+is_ddl_compiled_3_test() ->
+    ?assertEqual(
+        true,
+        is_ddl_compiled({[true], []})
+    ).
+
+is_ddl_compiled_4_test() ->
+    ?assertEqual(
+        false,
+        is_ddl_compiled({[true, false], []})
+    ).
+
+
+-endif.

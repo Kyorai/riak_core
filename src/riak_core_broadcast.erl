@@ -55,13 +55,13 @@
           %% Initially trees rooted at each node are the same.
           %% Portions of that tree belonging to this node are
           %% shared in this set.
-          common_eagers :: ordsets:ordset(nodename()),
+          common_eagers :: ordsets:ordset(nodename()) | undefined,
 
           %% Initially trees rooted at each node share the same lazy links.
           %% Typically this set will contain a single element. However, it may
           %% contain more in large clusters and may be empty for clusters with
           %% less than three nodes.
-          common_lazys  :: ordsets:ordset(nodename()),
+          common_lazys  :: ordsets:ordset(nodename()) | undefined,
 
           %% A mapping of sender node (root of each broadcast tree)
           %% to this node's portion of the tree. Elements are
@@ -69,14 +69,14 @@
           %% propogate to this node. Nodes that are never the
           %% root of a message will never have a key added to
           %% `eager_sets'
-          eager_sets    :: [{nodename(), ordsets:ordset(nodename())}],
+          eager_sets    :: [{nodename(), ordsets:ordset(nodename())}] | undefined,
 
           %% A Mapping of sender node (root of each spanning tree)
           %% to this node's set of lazy peers. Elements are added
           %% to this structure as messages rooted at a node
           %% propogate to this node. Nodes that are never the root
           %% of a message will never have a key added to `lazy_sets'
-          lazy_sets     :: [{nodename(), ordsets:ordset(nodename())}],
+          lazy_sets     :: [{nodename(), ordsets:ordset(nodename())}] | undefined,
 
           %% Lazy messages that have not been acked. Messages are added to
           %% this set when a node is sent a lazy message (or when it should be
@@ -94,7 +94,7 @@
 
           %% Set of all known members. Used to determine
           %% which members have joined and left during a membership update
-          all_members   :: ordsets:ordset(nodename())
+          all_members   :: ordsets:ordset(nodename()) | undefined
          }).
 
 %%%===================================================================
@@ -490,7 +490,7 @@ random_other_node(OrdSet) ->
     case Size of
         0 -> undefined;
         _ ->
-            lists:nth(random:uniform(Size),
+            lists:nth(riak_core_rand:uniform(Size),
                      ordsets:to_list(OrdSet))
     end.
 
@@ -608,19 +608,19 @@ init_peers(Members) ->
             %% with cycles. it will be adjusted as needed
             Tree = riak_core_util:build_tree(1, Members, [cycles]),
             InitEagers = orddict:fetch(node(), Tree),
-            InitLazys  = [lists:nth(random:uniform(N - 2), Members -- [node() | InitEagers])];
+            InitLazys  = [lists:nth(riak_core_rand:uniform(N - 2), Members -- [node() | InitEagers])];
         N when N < 10 ->
             %% 5 to 9 members, start with gossip tree used by
             %% riak_core_gossip. it will be adjusted as needed
             Tree = riak_core_util:build_tree(2, Members, [cycles]),
             InitEagers = orddict:fetch(node(), Tree),
-            InitLazys  = [lists:nth(random:uniform(N - 3), Members -- [node() | InitEagers])];
+            InitLazys  = [lists:nth(riak_core_rand:uniform(N - 3), Members -- [node() | InitEagers])];
         N ->
             %% 10 or more members, use a tree similar to riak_core_gossip
             %% but with higher fanout (larger initial eager set size)
             NEagers = round(math:log(N) + 1),
             Tree = riak_core_util:build_tree(NEagers, Members, [cycles]),
             InitEagers = orddict:fetch(node(), Tree),
-            InitLazys  = [lists:nth(random:uniform(N - (NEagers + 1)), Members -- [node() | InitEagers])]
+            InitLazys  = [lists:nth(riak_core_rand:uniform(N - (NEagers + 1)), Members -- [node() | InitEagers])]
     end,
     {InitEagers, InitLazys}.

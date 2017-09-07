@@ -63,12 +63,12 @@
           item_queue_byte_size :: non_neg_integer(),
 
           acksync_threshold    :: non_neg_integer(),
-          acksync_timer        :: timer:tref(),
+          acksync_timer        :: timer:tref() | undefined,
 
           type                 :: ho_type(),
 
           notsent_acc          :: term(),
-          notsent_fun          :: function()
+          notsent_fun          :: function() | undefined
         }).
 
 %%%===================================================================
@@ -96,7 +96,7 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
 
     try
         %% Give workers one more chance to abort or get a lock or whatever.
-         FoldOpts = maybe_call_handoff_started(Module, SrcPartition),
+        FoldOpts = maybe_call_handoff_started(Module, SrcPartition),
 
          Filter = get_filter(Opts),
          [_Name,Host] = string:tokens(atom_to_list(TargetNode), "@"),
@@ -121,6 +121,27 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
                      {Skt, gen_tcp}
              end,
 
+         RecvTimeout = get_handoff_receive_timeout(),
+
+        %% We want to ensure that the node we think we are talking to
+        %% really is the node we expect.
+        %% The remote node will reply with PT_MSG_VERIFY_NODE if it
+        %% is the correct node or close the connection if not.
+        %% If the node does not support this functionality we
+        %% print an error and keep going with our fingers crossed.
+        TargetBin = term_to_binary(TargetNode),
+        VerifyNodeMsg = <<?PT_MSG_VERIFY_NODE:8,TargetBin/binary>>,
+        ok = TcpMod:send(Socket, VerifyNodeMsg),
+        case TcpMod:recv(Socket, 0, RecvTimeout) of
+            {ok,[?PT_MSG_VERIFY_NODE | _]} -> ok;
+            {ok,[?PT_MSG_UNKNOWN | _]} ->
+                lager:warning("Could not verify identity of peer ~s.",
+                              [TargetNode]),
+                ok;
+            {error, timeout} -> exit({shutdown, timeout});
+            {error, closed} -> exit({shutdown, wrong_node})
+        end,
+
          %% Piggyback the sync command from previous releases to send
          %% the vnode type across.  If talking to older nodes they'll
          %% just do a sync, newer nodes will decode the module name.
@@ -130,8 +151,6 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
          ModBin = atom_to_binary(Module, utf8),
          Msg = <<?PT_MSG_OLDSYNC:8,ModBin/binary>>,
          ok = TcpMod:send(Socket, Msg),
-
-         RecvTimeout = get_handoff_receive_timeout(),
 
          AckSyncThreshold = app_helper:get_env(riak_core, handoff_acksync_threshold, 25),
 
@@ -189,17 +208,21 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
                                      notsent_fun=UnsentFun},
                              false,
                              FoldOpts),
-
          %% IFF the vnode is using an async worker to perform the fold
          %% then sync_command will return error on vnode crash,
          %% otherwise it will wait forever but vnode crash will be
          %% caught by handoff manager.  I know, this is confusing, a
          %% new handoff system will be written soon enough.
 
-         AccRecord0 = riak_core_vnode_master:sync_command({SrcPartition, SrcNode},
-                                                          Req,
-                                                          VMaster, infinity),
-
+         AccRecord0 = case riak_core_vnode_master:sync_command(
+                             {SrcPartition, SrcNode}, Req, VMaster, infinity) of
+                          #ho_acc{} = Ret ->
+                              Ret;
+                          Ret ->
+                              lager:error("[handoff] Bad handoff record: ~p",
+                                          [Ret]),
+                              Ret
+                      end,
          %% Send any straggler entries remaining in the buffer:
          AccRecord = send_objects(AccRecord0#ho_acc.item_queue, AccRecord0),
 

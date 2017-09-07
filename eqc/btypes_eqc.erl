@@ -41,10 +41,10 @@
          }).
 
 btypes_test_() -> {
-              timeout, 60,
-              ?_test(?assert(
-                        eqc:quickcheck(?QC_OUT(eqc:testing_time(50, prop_btype_invariant())))))
-             }.
+        timeout, 120,
+        ?_test(?assert(
+            eqc:quickcheck(?QC_OUT(eqc:numtests(100, prop_btype_invariant())))))
+    }.
 
 run_eqc() ->
     run_eqc(100).
@@ -314,12 +314,12 @@ props() ->
     fault_rate(1, 10, ?LET(Props, list(prop()), fault([immutable_core_prop() | Props], Props))).
 
 prop() ->
-    {prop_name(), prop_value()}.
+    {a_prop_name(), a_prop_value()}.
 
-prop_name() ->
+a_prop_name() ->
     binary(10).
 
-prop_value() ->
+a_prop_value() ->
     bool().
 
 immutable_core_prop() ->

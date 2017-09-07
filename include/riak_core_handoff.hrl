@@ -10,11 +10,13 @@
 -define(PT_MSG_SYNC, 3).
 -define(PT_MSG_CONFIGURE, 4).
 -define(PT_MSG_BATCH, 5).
+-define(PT_MSG_VERIFY_NODE, 6).
+-define(PT_MSG_UNKNOWN, 255).
 
 -record(ho_stats,
         {
           interval_end          :: erlang:timestamp(),
-          last_update           :: erlang:timestamp(),
+          last_update           :: erlang:timestamp() | undefined,
           objs=0                :: non_neg_integer(),
           bytes=0               :: non_neg_integer()
         }).
@@ -38,11 +40,11 @@
           status                :: any(),
           stats                 :: riak_core_handoff_dict(),
           vnode_pid             :: pid() | undefined,
-          vnode_mon             :: reference(),
-          type                  :: ho_type(),
+          vnode_mon             :: reference() | undefined,
+          type                  :: ho_type() | undefined,
           req_origin            :: node(),
-          filter_mod_fun        :: {module(), atom()},
-          size                  :: {function(), dynamic} | {non_neg_integer(), bytes | objects}
+          filter_mod_fun        :: {module(), atom()} | undefined,
+          size                  :: {function(), dynamic} | {non_neg_integer(), bytes | objects}  | undefined
         }).
 -type handoff_status() :: #handoff_status{}.
 

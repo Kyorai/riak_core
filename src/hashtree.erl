@@ -195,21 +195,21 @@
 
 -type next_rebuild() :: full | incremental.
 
--record(state, {id                 :: tree_id_bin(),
-                index              :: index(),
-                levels             :: pos_integer(),
-                segments           :: pos_integer(),
-                width              :: pos_integer(),
-                mem_levels         :: integer(),
-                tree               :: hashtree_dict(),
-                ref                :: term(),
-                path               :: string(),
-                itr                :: term(),
-                next_rebuild       :: next_rebuild(),
-                write_buffer       :: [{put, binary(), binary()} |
-                                       {delete, binary()}],
-                write_buffer_count :: integer(),
-                dirty_segments     :: hashtree_array()
+-record(state, {id                 :: undefined | tree_id_bin(),
+                index              :: undefined | index(),
+                levels             :: undefined | pos_integer(),
+                segments           :: undefined | pos_integer(),
+                width              :: undefined | pos_integer(),
+                mem_levels         :: undefined | integer(),
+                tree               :: undefined | hashtree_dict(),
+                ref                :: undefined | term(),
+                path               :: undefined | string(),
+                itr                :: undefined | term(),
+                next_rebuild       :: undefined | next_rebuild(),
+                write_buffer       :: undefined | [{put, binary(), binary()} |
+                                                   {delete, binary()}],
+                write_buffer_count :: undefined | integer(),
+                dirty_segments     :: undefined | hashtree_array()
                }).
 
 -record(itr_state, {itr                :: term(),
@@ -424,7 +424,7 @@ clear_buckets(State=#state{id=Id, ref=Ref}) ->
           end,
     Opts = [{first_key, encode_bucket(Id, 0, 0)}],
     Removed = try
-%hashtree.erl:415: The call eleveldb:fold(Ref::any(),Fun::fun((_,_) -> number()),0,Opts::[{'first_key',<<_:320>>},...]) breaks the contract (db_ref(),fold_fun(),any(),read_options()) -> any()
+                                                %hashtree.erl:415: The call eleveldb:fold(Ref::any(),Fun::fun((_,_) -> number()),0,Opts::[{'first_key',<<_:320>>},...]) breaks the contract (db_ref(),fold_fun(),any(),read_options()) -> any()
 
                   eleveldb:fold(Ref, Fun, 0, Opts)
               catch
@@ -438,7 +438,6 @@ clear_buckets(State=#state{id=Id, ref=Ref}) ->
     %% tree.
     State#state{next_rebuild = full,
                 tree = dict:new()}.
-            
 
 -spec update_tree([integer()], hashtree()) -> hashtree().
 update_tree([], State) ->
@@ -699,7 +698,7 @@ new_segment_store(Opts, State) ->
     DataDir = case proplists:get_value(segment_path, Opts) of
                   undefined ->
                       Root = "/tmp/anti/level",
-                      <<P:128/integer>> = md5(term_to_binary({erlang:now(), make_ref()})),
+                      <<P:128/integer>> = md5(term_to_binary({erlang:monotonic_time(), make_ref()})),
                       filename:join(Root, integer_to_list(P));
                   SegmentPath ->
                       SegmentPath
@@ -716,7 +715,7 @@ new_segment_store(Opts, State) ->
     %% flushed to disk at once when under a heavy uniform load.
     WriteBufferMin = proplists:get_value(write_buffer_size_min, Config, DefaultWriteBufferMin),
     WriteBufferMax = proplists:get_value(write_buffer_size_max, Config, DefaultWriteBufferMax),
-    {Offset, _} = random:uniform_s(1 + WriteBufferMax - WriteBufferMin, now()),
+    {Offset, _} = riak_core_rand:uniform_s(1 + WriteBufferMax - WriteBufferMin, erlang:timestamp()),
     WriteBufferSize = WriteBufferMin + Offset,
     Config2 = orddict:store(write_buffer_size, WriteBufferSize, Config),
     Config3 = orddict:erase(write_buffer_size_min, Config2),
@@ -778,7 +777,7 @@ update_levels(Level, Groups, State, Type) ->
 -spec rebuild_fold(integer(),
                    [{integer(), [{integer(), binary()}]}], hashtree(),
                    next_rebuild()) -> {integer(), next_rebuild(),
-                                      hashtree(), [{integer(), binary()}]}.
+                                       hashtree(), [{integer(), binary()}]}.
 rebuild_fold(Level, Groups, State, Type) ->
     lists:foldl(fun rebuild_folder/2, {Level, Type, State, []}, Groups).
 
@@ -982,8 +981,8 @@ multi_select_segment(#state{id=Id, itr=Itr}, Segments, F) ->
     %% that do not exist at the end of the file (due to deleting the last entry in the
     %% segment).
     Result = [{LeftSeg, F([])} || LeftSeg <- lists:reverse(LeftOver),
-                  LeftSeg =/= '*'] ++
-    [{LastSegment, F(LastAcc)} | FA],
+                                  LeftSeg =/= '*'] ++
+        [{LastSegment, F(LastAcc)} | FA],
     case Result of
         [{'*', _}] ->
             %% Handle wildcard select when all segments are empty
@@ -1132,9 +1131,9 @@ exchange_level(Level, Buckets, Local, Remote, _Opts) ->
                           A = Local(get_bucket, {Level, Bucket}),
                           B = Remote(get_bucket, {Level, Bucket}),
                           Delta = riak_core_util:orddict_delta(lists:keysort(1, A),
-                                                                   lists:keysort(1, B)),
-              lager:debug("Exchange Level ~p Bucket ~p\nA=~p\nB=~p\nD=~p\n",
-                      [Level, Bucket, A, B, Delta]),
+                                                               lists:keysort(1, B)),
+                          lager:debug("Exchange Level ~p Bucket ~p\nA=~p\nB=~p\nD=~p\n",
+                                      [Level, Bucket, A, B, Delta]),
 
                           Diffs = Delta,
                           [BK || {BK, _} <- Diffs]
@@ -1146,9 +1145,9 @@ exchange_final(_Level, Segments, Local, Remote, AccFun, Acc0, _Opts) ->
                         A = Local(key_hashes, Segment),
                         B = Remote(key_hashes, Segment),
                         Delta = riak_core_util:orddict_delta(lists:keysort(1, A),
-                                                                 lists:keysort(1, B)),
-            lager:debug("Exchange Final\nA=~p\nB=~p\nD=~p\n",
-                    [A, B, Delta]),
+                                                             lists:keysort(1, B)),
+                        lager:debug("Exchange Final\nA=~p\nB=~p\nD=~p\n",
+                                    [A, B, Delta]),
                         Keys = [begin
                                     {_Id, Segment, Key} = decode(KBin),
                                     Type = key_diff_type(Diff),
@@ -1170,8 +1169,8 @@ compare(Level, Bucket, Tree, Remote, AccFun, KeyAcc) ->
     Inter = ordsets:intersection(ordsets:from_list(HL1),
                                  ordsets:from_list(HL2)),
     Diff = ordsets:subtract(Union, Inter),
-    lager:debug("Tree ~p level ~p bucket ~p\nL=~p\nR=~p\nD=\n",
-        [Tree, Level, Bucket, HL1, HL2, Diff]),
+    lager:debug("Tree ~p level ~p bucket ~p\nL=~p\nR=~p\nD=~p\n",
+                [Tree, Level, Bucket, HL1, HL2, Diff]),
     KeyAcc3 =
         lists:foldl(fun({Bucket2, _}, KeyAcc2) ->
                             compare(Level+1, Bucket2, Tree, Remote, AccFun, KeyAcc2)
@@ -1432,17 +1431,17 @@ local_compare(T1, T2) ->
 -spec local_compare1(hashtree(), hashtree()) -> [keydiff()].
 local_compare1(T1, T2) ->
     Remote = fun(get_bucket, {L, B}) ->
-        get_bucket(L, B, T2);
-        (start_exchange_level, {_Level, _Buckets}) ->
-            ok;
-        (start_exchange_segments, _Segments) ->
-            ok;
-        (key_hashes, Segment) ->
-            [{_, KeyHashes2}] = key_hashes(T2, Segment),
-            KeyHashes2
+                     get_bucket(L, B, T2);
+                (start_exchange_level, {_Level, _Buckets}) ->
+                     ok;
+                (start_exchange_segments, _Segments) ->
+                     ok;
+                (key_hashes, Segment) ->
+                     [{_, KeyHashes2}] = key_hashes(T2, Segment),
+                     KeyHashes2
              end,
     AccFun = fun(Keys, KeyAcc) ->
-        Keys ++ KeyAcc
+                     Keys ++ KeyAcc
              end,
     compare(T1, Remote, AccFun, []).
 
@@ -1607,15 +1606,15 @@ prop_sha() ->
     %% NOTE: Generating 1MB (1024 * 1024) size binaries is incredibly slow
     %% with EQC and was using over 2GB of memory
     ?FORALL({Size, NumChunks}, {choose(1, 1024), choose(1, 16)},
-                    ?FORALL(Bin, binary(Size),
-                            begin
-                                %% we need at least one chunk,
-                                %% and then we divide the binary size
-                                %% into the number of chunks (as a natural
-                                %% number)
-                                ChunkSize = max(1, (Size div NumChunks)),
-                                sha(ChunkSize, Bin) =:= esha(Bin)
-                            end)).
+            ?FORALL(Bin, binary(Size),
+                    begin
+                        %% we need at least one chunk,
+                        %% and then we divide the binary size
+                        %% into the number of chunks (as a natural
+                        %% number)
+                        ChunkSize = max(1, (Size div NumChunks)),
+                        sha(ChunkSize, Bin) =:= esha(Bin)
+                    end)).
 
 eqc_test_() ->
     {spawn,

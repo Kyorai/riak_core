@@ -33,7 +33,8 @@
          get_common_name/1,
          load_certs/1,
          parse_ciphers/1,
-         print_ciphers/1
+         print_ciphers/1,
+         ssl_accept/2
         ]).
 
 -ifdef(TEST).
@@ -127,7 +128,7 @@ upgrade_server_to_ssl(Socket, App) ->
         false ->
             {error, no_ssl_config};
         Config ->
-            ssl:ssl_accept(Socket, Config)
+            ssl_accept(Socket, Config)
     end.
 
 load_certs(undefined) ->
@@ -329,6 +330,18 @@ print_ciphers(CipherList) ->
     string:join([ssl_cipher:openssl_suite_name(Cipher) || Cipher <-
                                                           CipherList], ":").
 
+-ifdef(ssl_accept_deprecated).
+ssl_accept(ClientSocket, SSLOptions) ->
+    ssl:handshake(ClientSocket, SSLOptions).
+-else.
+ssl_accept(ClientSocket, SSLOptions) ->
+    case ssl:ssl_accept(ClientSocket, SSLOptions) of
+        ok ->
+            {ok, ClientSocket};
+        {error, Reason} ->
+            {error, Reason}
+    end.
+-endif.
 
 %% ===================================================================
 %% EUnit tests

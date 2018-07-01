@@ -458,7 +458,7 @@ ssl_test_() ->
         spawn(fun () ->
             %% server
             {ok, S} = ssl:transport_accept(LS),
-            {ok, NewS} = riak_core_ssl_util:ssl_accept(S),
+            {ok, NewS} = riak_core_ssl_util:new_ssl_accept(S, [], infinity),
             ssl_recv_loop(NewS)
         end),
 

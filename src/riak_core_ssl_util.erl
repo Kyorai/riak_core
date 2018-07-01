@@ -34,7 +34,7 @@
          load_certs/1,
          parse_ciphers/1,
          print_ciphers/1,
-         ssl_accept/2
+         new_ssl_accept/3
         ]).
 
 -ifdef(TEST).
@@ -128,7 +128,7 @@ upgrade_server_to_ssl(Socket, App) ->
         false ->
             {error, no_ssl_config};
         Config ->
-            ssl_accept(Socket, Config)
+            new_ssl_accept(Socket, Config, infinity)
     end.
 
 load_certs(undefined) ->
@@ -330,13 +330,22 @@ print_ciphers(CipherList) ->
     string:join([ssl_cipher:openssl_suite_name(Cipher) || Cipher <-
                                                           CipherList], ":").
 
--ifdef(ssl_accept_deprecated).
-ssl_accept(ClientSocket, SSLOptions) ->
-    ssl:handshake(ClientSocket, SSLOptions).
+-ifdef(OTP_RELEASE).
+new_ssl_accept(ClientSocket, SSLOptions, Timeout) ->
+    case ssl:handshake(ClientSocket, SSLOptions, Timeout) of
+        {ok, SslClientSocket} ->
+            {ok, SslClientSocket};
+        {ok, SslClientSocket, _Ext} ->
+            {ok, SslClientSocket};
+        {error, Reason} ->
+            {error, Reason}
+    end.
 -else.
-ssl_accept(ClientSocket, SSLOptions) ->
-    case ssl:ssl_accept(ClientSocket, SSLOptions) of
+new_ssl_accept(ClientSocket, SSLOptions, Timeout) ->
+    case ssl:ssl_accept(ClientSocket, SSLOptions, Timeout) of
         ok ->
+            {ok, ClientSocket};
+        {ok, ClientSocket} ->
             {ok, ClientSocket};
         {error, Reason} ->
             {error, Reason}

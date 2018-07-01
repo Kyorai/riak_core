@@ -69,7 +69,7 @@ init([SslOpts]) ->
 handle_call({set_socket, Socket0}, _From, State = #state{ssl_opts = SslOpts}) ->
     SockOpts = [{active, once}, {packet, 4}, {header, 1}],
     Socket = if SslOpts /= [] ->
-                     {ok, NSkt} = riak_core_ssl_util:ssl_accept(Socket0, SslOpts, 30*1000),
+                     {ok, NSkt} = riak_core_ssl_util:new_ssl_accept(Socket0, SslOpts, 30*1000),
                      ok = ssl:setopts(NSkt, SockOpts),
                      Peer = safe_peername(NSkt, ssl),
                      NSkt;
